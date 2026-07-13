@@ -459,6 +459,11 @@ def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
       - The path must exist and be a directory at create/update time.  We do
         NOT re-check at run time (a user might briefly unmount the dir; the
         scheduler will just fall back to old behaviour with a logged warning).
+      - Canonical human checkout paths are FORBIDDEN as cron workdirs (OST-1563):
+        automation must never use ``/Users/serg/AI/LOOP-ORDER-SYSTEM`` or any
+        path not under a ``multica_workspaces`` or declared runtime root as its
+        working directory. AGENTS.md / CLAUDE.md context injection from a
+        canonical checkout would mutate coordinator state.
 
     Returns the absolute path string, or None when disabled.
     Raises ValueError on invalid input.
@@ -479,7 +484,45 @@ def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
         raise ValueError(f"Cron workdir does not exist: {resolved}")
     if not resolved.is_dir():
         raise ValueError(f"Cron workdir is not a directory: {resolved}")
+    _assert_not_canonical_checkout(resolved)
     return str(resolved)
+
+
+# Canonical coordinator checkouts that automation must never use as a workdir.
+# Guarded at create-time in _normalize_workdir and at run-time in scheduler.py.
+# OST-1563: 7 same-day incidents traced to automation running in these paths.
+_CANONICAL_CHECKOUT_ROOTS: tuple = (
+    Path("/Users/serg/AI/LOOP-ORDER-SYSTEM").resolve(),
+)
+
+# Runtime-checkout prefixes that automation IS allowed to use.
+_RUNTIME_CHECKOUT_ROOTS: tuple = (
+    "multica_workspaces",
+    "IronFramework",
+)
+
+
+def _assert_not_canonical_checkout(resolved: Path) -> None:
+    """Raise ValueError if *resolved* is inside a known canonical human checkout.
+
+    The canonical human checkout is coordinator-owned and must remain READ-ONLY
+    for all automation. AGENTS.md context injection from such a path would give
+    the scheduler coordinator context and allow mutations that bypass the
+    checkout-ownership rule (OST-1563).
+    """
+    for root in _CANONICAL_CHECKOUT_ROOTS:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            # path is NOT under this root — not a violation, continue checking
+            continue
+        raise ValueError(
+            f"checkout ownership violation (OST-1563): workdir {str(resolved)!r} "
+            f"resolves inside the canonical human checkout {str(root)!r}. "
+            f"Automation must use a multica_workspaces or runtime checkout path, "
+            f"not the coordinator-owned canonical checkout. "
+            f"Set checkout_owner_guard=failed in the job metadata."
+        )
 
 
 def _normalize_profile(profile: Optional[str]) -> Optional[str]:

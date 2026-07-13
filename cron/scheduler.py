@@ -1389,6 +1389,19 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
             job_id, _job_workdir,
         )
         _job_workdir = None
+    if _job_workdir:
+        # OST-1563 runtime guard: reject canonical coordinator checkouts at
+        # run-time even if they somehow passed create-time validation.
+        from cron.jobs import _assert_not_canonical_checkout
+        try:
+            _assert_not_canonical_checkout(Path(_job_workdir).resolve())
+        except ValueError as _wd_err:
+            logger.error(
+                "Job '%s': checkout ownership violation at run-time — %s. "
+                "Aborting job run to protect canonical checkout.",
+                job_id, _wd_err,
+            )
+            return False, "", "", f"checkout_owner_guard=failed: {_wd_err}"
     _prior_terminal_cwd = os.environ.get("TERMINAL_CWD", "_UNSET_")
     if _job_workdir:
         os.environ["TERMINAL_CWD"] = _job_workdir

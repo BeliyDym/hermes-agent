@@ -70,6 +70,36 @@ class TestNormalizeWorkdir:
         with pytest.raises(ValueError, match="not a directory"):
             _normalize_workdir(str(f))
 
+    def test_canonical_checkout_rejected(self, tmp_path, monkeypatch):
+        """OST-1563: canonical human checkout must not be accepted as a workdir."""
+        import cron.jobs as jobs_mod
+        # Patch the canonical roots to use tmp_path so the test is hermetic
+        fake_root = (tmp_path / "canonical-checkout").resolve()
+        fake_root.mkdir()
+        monkeypatch.setattr(jobs_mod, "_CANONICAL_CHECKOUT_ROOTS", (fake_root,))
+        with pytest.raises(ValueError, match="checkout ownership violation"):
+            jobs_mod._normalize_workdir(str(fake_root))
+
+    def test_subdir_of_canonical_checkout_rejected(self, tmp_path, monkeypatch):
+        """OST-1563: subdirectory of canonical checkout is also forbidden."""
+        import cron.jobs as jobs_mod
+        fake_root = (tmp_path / "canonical-checkout").resolve()
+        subdir = fake_root / "src"
+        subdir.mkdir(parents=True)
+        monkeypatch.setattr(jobs_mod, "_CANONICAL_CHECKOUT_ROOTS", (fake_root,))
+        with pytest.raises(ValueError, match="checkout ownership violation"):
+            jobs_mod._normalize_workdir(str(subdir))
+
+    def test_runtime_checkout_accepted(self, tmp_path, monkeypatch):
+        """OST-1563: a multica_workspaces path must not be blocked."""
+        import cron.jobs as jobs_mod
+        # Patch canonical roots away from tmp_path so runtime path is clean
+        monkeypatch.setattr(jobs_mod, "_CANONICAL_CHECKOUT_ROOTS", ())
+        runtime_path = tmp_path / "multica_workspaces" / "abc" / "repo"
+        runtime_path.mkdir(parents=True)
+        result = jobs_mod._normalize_workdir(str(runtime_path))
+        assert result == str(runtime_path.resolve())
+
 
 # ---------------------------------------------------------------------------
 # jobs.create_job and update_job
