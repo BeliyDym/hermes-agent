@@ -167,6 +167,12 @@ class ResponsesApiTransport(ProviderTransport):
         if "gpt-5.6" in (model or "").lower():
             # Ultra is the Codex product tier; the Responses API wire value is max.
             _effort_clamp["ultra"] = "max"
+        elif "gpt-5.5" in (model or "").lower():
+            # gpt-5.5 rejects `reasoning.effort=max` (API 400; "max" is not in
+            # the supported set). Observed supported maximum is `xhigh` — the
+            # error payload lists xhigh as valid and no xhigh rejection was ever
+            # logged. Clamp only the unsupported values; preserve explicit xhigh.
+            _effort_clamp.update({"max": "xhigh", "ultra": "xhigh"})
         if params.get("is_xai_responses", False):
             # xAI Responses tops out at high; keep generic stronger values usable.
             _effort_clamp.update({"xhigh": "high", "max": "high", "ultra": "high"})
