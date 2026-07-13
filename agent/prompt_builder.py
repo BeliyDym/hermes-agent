@@ -24,6 +24,10 @@ from agent.skill_utils import (
     parse_frontmatter,
     skill_matches_platform,
 )
+from agent.checkout_ownership import (
+    checkout_owner_guard_message,
+    checkout_ownership_enforced,
+)
 from utils import atomic_json_write
 
 logger = logging.getLogger(__name__)
@@ -1442,6 +1446,11 @@ def build_context_files_prompt(cwd: Optional[str] = None, skip_soul: bool = Fals
         cwd = os.getcwd()
 
     cwd_path = Path(cwd).resolve()
+    if checkout_ownership_enforced():
+        guard_message = checkout_owner_guard_message(cwd_path)
+        if guard_message:
+            raise RuntimeError(guard_message)
+
     sections = []
 
     # Priority-based project context: first match wins

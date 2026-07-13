@@ -40,6 +40,10 @@ from hermes_constants import get_hermes_home
 from hermes_cli._subprocess_compat import windows_hide_flags
 from hermes_cli.config import load_config, _expand_env_vars
 from hermes_time import now as _hermes_now
+from agent.checkout_ownership import (
+    ENFORCE_CHECKOUT_OWNERSHIP_ENV,
+    assert_runtime_writable_workdir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1179,6 +1183,11 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
         _job_workdir = (job.get("workdir") or "").strip() or None
         _prior_cwd = None
         if _job_workdir and Path(_job_workdir).is_dir():
+            try:
+                assert_runtime_writable_workdir(_job_workdir)
+            except PermissionError as exc:
+                logger.error("Job '%s': %s", job_id, exc)
+                return False, "", "", str(exc)
             _prior_cwd = os.getcwd()
             try:
                 os.chdir(_job_workdir)
@@ -1390,8 +1399,36 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
         )
         _job_workdir = None
     _prior_terminal_cwd = os.environ.get("TERMINAL_CWD", "_UNSET_")
+    _prior_checkout_guard = os.environ.get(ENFORCE_CHECKOUT_OWNERSHIP_ENV, "_UNSET_")
     if _job_workdir:
+        try:
+            assert_runtime_writable_workdir(_job_workdir)
+        except PermissionError as exc:
+            error_msg = str(exc)
+            logger.error("Job '%s': %s", job_id, error_msg)
+            clear_session_vars(_ctx_tokens)
+            for _var_name in _cron_delivery_vars:
+                _VAR_MAP[_var_name].set("")
+            if _session_db:
+                try:
+                    _session_db.end_session(_cron_session_id, "cron_complete")
+                except (Exception, KeyboardInterrupt) as e:
+                    logger.debug("Job '%s': failed to end session: %s", job_id, e)
+                try:
+                    _session_db.close()
+                except (Exception, KeyboardInterrupt) as e:
+                    logger.debug("Job '%s': failed to close SQLite session store: %s", job_id, e)
+            blocked_doc = (
+                f"# Cron Job: {job_name} (FAILED)\n\n"
+                f"**Job ID:** {job_id}\n"
+                f"**Run Time:** {_hermes_now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"**Schedule:** {job.get('schedule_display', 'N/A')}\n\n"
+                "## Error\n\n"
+                f"```\n{error_msg}\n```\n"
+            )
+            return False, blocked_doc, "", error_msg
         os.environ["TERMINAL_CWD"] = _job_workdir
+        os.environ[ENFORCE_CHECKOUT_OWNERSHIP_ENV] = "1"
         logger.info("Job '%s': using workdir %s", job_id, _job_workdir)
 
     try:
@@ -1751,6 +1788,10 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
                 os.environ.pop("TERMINAL_CWD", None)
             else:
                 os.environ["TERMINAL_CWD"] = _prior_terminal_cwd
+        if _prior_checkout_guard == "_UNSET_":
+            os.environ.pop(ENFORCE_CHECKOUT_OWNERSHIP_ENV, None)
+        else:
+            os.environ[ENFORCE_CHECKOUT_OWNERSHIP_ENV] = _prior_checkout_guard
         # Clean up ContextVar session/delivery state for this job.
         clear_session_vars(_ctx_tokens)
         for _var_name in _cron_delivery_vars:
