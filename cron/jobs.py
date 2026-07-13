@@ -16,6 +16,7 @@ import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from agent.checkout_ownership import checkout_owner_guard_message
 from hermes_constants import get_hermes_home
 from typing import Optional, Dict, List, Any, Union
 
@@ -479,6 +480,9 @@ def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
         raise ValueError(f"Cron workdir does not exist: {resolved}")
     if not resolved.is_dir():
         raise ValueError(f"Cron workdir is not a directory: {resolved}")
+    guard_message = checkout_owner_guard_message(resolved)
+    if guard_message:
+        raise ValueError(guard_message)
     return str(resolved)
 
 

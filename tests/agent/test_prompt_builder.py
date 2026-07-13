@@ -547,6 +547,18 @@ class TestBuildContextFilesPrompt:
         result = build_context_files_prompt(cwd=str(tmp_path))
         assert "BLOCKED" in result
 
+    def test_rejects_protected_checkout_when_enforced(self, tmp_path, monkeypatch):
+        from agent.checkout_ownership import (
+            ENFORCE_CHECKOUT_OWNERSHIP_ENV,
+            PROTECTED_CHECKOUTS_ENV,
+        )
+
+        monkeypatch.setenv(PROTECTED_CHECKOUTS_ENV, str(tmp_path))
+        monkeypatch.setenv(ENFORCE_CHECKOUT_OWNERSHIP_ENV, "1")
+
+        with pytest.raises(RuntimeError, match="checkout_owner_guard=failed"):
+            build_context_files_prompt(cwd=str(tmp_path))
+
     def test_loads_cursor_rules_mdc(self, tmp_path):
         rules_dir = tmp_path / ".cursor" / "rules"
         rules_dir.mkdir(parents=True)
@@ -1192,6 +1204,5 @@ class TestOpenAIModelExecutionGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
 
 

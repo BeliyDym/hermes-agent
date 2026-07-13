@@ -70,6 +70,17 @@ class TestNormalizeWorkdir:
         with pytest.raises(ValueError, match="not a directory"):
             _normalize_workdir(str(f))
 
+    def test_protected_canonical_checkout_rejected(self, tmp_path, monkeypatch):
+        from agent.checkout_ownership import PROTECTED_CHECKOUTS_ENV
+        from cron.jobs import _normalize_workdir
+
+        protected = tmp_path / "canonical"
+        protected.mkdir()
+        monkeypatch.setenv(PROTECTED_CHECKOUTS_ENV, str(protected))
+
+        with pytest.raises(ValueError, match="checkout_owner_guard=failed"):
+            _normalize_workdir(str(protected))
+
 
 # ---------------------------------------------------------------------------
 # jobs.create_job and update_job
@@ -382,3 +393,34 @@ class TestRunJobTerminalCwd:
         # And after run_job completes, it's still the sentinel (nothing
         # overwrote or cleared it).
         assert os.environ["TERMINAL_CWD"] == before
+
+    def test_protected_workdir_fails_before_agent_init(self, tmp_path, monkeypatch):
+        import os
+        import cron.scheduler as sched
+        from agent.checkout_ownership import (
+            ENFORCE_CHECKOUT_OWNERSHIP_ENV,
+            PROTECTED_CHECKOUTS_ENV,
+        )
+
+        protected = tmp_path / "canonical"
+        protected.mkdir()
+        monkeypatch.setenv(PROTECTED_CHECKOUTS_ENV, str(protected))
+        monkeypatch.setenv("TERMINAL_CWD", "/original/cwd")
+
+        observed: dict = {}
+        self._install_stubs(monkeypatch, observed)
+
+        job = {
+            "id": "blocked",
+            "name": "blocked-wd-job",
+            "workdir": str(protected),
+            "schedule_display": "manual",
+        }
+
+        success, _output, _response, error = sched.run_job(job)
+
+        assert success is False
+        assert "checkout_owner_guard=failed" in (error or "")
+        assert observed == {}
+        assert os.environ["TERMINAL_CWD"] == "/original/cwd"
+        assert os.environ.get(ENFORCE_CHECKOUT_OWNERSHIP_ENV) is None
